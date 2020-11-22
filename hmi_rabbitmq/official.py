@@ -1,6 +1,7 @@
-from typing import Optional, Mapping, Any, Sequence
+from typing import Optional, Mapping, Any, Sequence, List
 
 import deepmerge
+from helmion.build import ValueData, BuildData
 from helmion.chart import Chart
 from helmion.config import Config
 from helmion.data import ChartData
@@ -113,44 +114,40 @@ class RabbitMQOfficialRequest:
         return ret
 
     def generate(self) -> Chart:
-        values = deepmerge.merge_or_raise(self.allowedValues(), self.values)
-        mrg_namespace = {}
-        if self.namespace is not None:
-            mrg_namespace = {
-                'metadata': {
-                    'namespace': self.namespace,
-                }
-            }
+        values = deepmerge.merge_or_raise.merge(self.allowedValues(), self.values)
 
         serviceaccount = values['serviceAccount']['create'] if values['serviceAccount']['name'] != '' else self.object_name()
 
-        ret = RabbitMQOfficialChart(self, self.config)
+        data: List[ChartData] = []
 
         if values['serviceAccount']['create']:
-            ret.data.append(deepmerge.merge_or_raise({
+            data.append({
                 'apiVersion': 'v1',
                 'kind': 'ServiceAccount',
                 'metadata': {
                     'name': serviceaccount,
+                    'namespace': ValueData(self.namespace, enabled=self.namespace is not None),
                 }
-            }, mrg_namespace))
+            })
 
         if values['rbac']['create']:
-            ret.data.extend([
-                deepmerge.merge_or_raise({
+            data.extend([
+                {
                     'kind': 'Role',
                     'apiVersion': 'rbac.authorization.k8s.io/v1beta1',
                     'metadata': {
                         'name': self.object_name(),
+                        'namespace': ValueData(self.namespace, enabled=self.namespace is not None),
                     },
                     'rules': [{'apiGroups': [''], 'resources': ['endpoints'], 'verbs': ['get']},
                         {'apiGroups': [''], 'resources': ['events'], 'verbs': ['create']}]
-                }, mrg_namespace),
-                deepmerge.merge_or_raise({
+                },
+                {
                     'kind': 'RoleBinding',
                     'apiVersion': 'rbac.authorization.k8s.io/v1beta1',
                     'metadata': {
                         'name': self.object_name(),
+                        'namespace': ValueData(self.namespace, enabled=self.namespace is not None),
                     },
                     'subjects': [{
                         'kind': 'ServiceAccount',
@@ -161,24 +158,25 @@ class RabbitMQOfficialRequest:
                         'kind': 'Role',
                         'name': self.object_name(),
                     }
-                }, mrg_namespace),
+                },
             ])
 
         plugins = set(values['plugins'].split(' '))
         if values['extraPlugins'] != '':
             plugins.update(values['extraPlugins'].split(' '))
 
-        ret.data.append(deepmerge.merge_or_raise({
+        data.append({
             'apiVersion': 'v1',
             'kind': 'ConfigMap',
             'metadata': {
                 'name': self.object_name('config'),
+                'namespace': ValueData(self.namespace, enabled=self.namespace is not None),
             },
             'data': {
                 'enabled_plugins': ' '.join(plugins),
                 'rabbitmq.conf': self.configfile_get(values),
             }
-        }, mrg_namespace))
+        })
 
         config_secret = {}
         if values['auth']['existingErlangSecret'] == '':
@@ -187,22 +185,25 @@ class RabbitMQOfficialRequest:
         if values['loadDefinition']['enabled'] and values['loadDefinition']['existingSecret'] == '':
             config_secret['load_definition.json'] = values['loadDefinition']['value']
 
-        ret.data.append(deepmerge.merge_or_raise({
+        data.append({
             'apiVersion': 'v1',
             'kind': 'Secret',
             'metadata': {
                 'name': self.object_name('config-secret'),
+                'namespace': ValueData(self.namespace, enabled=self.namespace is not None),
+
             },
             'type': 'Opaque',
             'data': config_secret,
-        }, mrg_namespace))
+        })
 
-        ret.data.extend([
-            deepmerge.merge_or_raise({
+        data.extend([
+            {
                 'apiVersion': 'v1',
                 'kind': 'Service',
                 'metadata': {
                     'name': self.object_name('headless'),
+                    'namespace': ValueData(self.namespace, enabled=self.namespace is not None),
                     'labels': {
                         'app.kubernetes.io/name': 'rabbitmq',
                         'app.kubernetes.io/instance': self.object_name(),
@@ -229,12 +230,13 @@ class RabbitMQOfficialRequest:
                     'type': 'ClusterIP',
                     'sessionAffinity': 'None'
                 }
-            }, mrg_namespace),
-            deepmerge.merge_or_raise({
+            },
+            {
                 'apiVersion': 'apps/v1',
                 'kind': 'StatefulSet',
                 'metadata': {
                     'name': self.object_name(),
+                    'namespace': ValueData(self.namespace, enabled=self.namespace is not None),
                     'labels': {
                         'app.kubernetes.io/name': 'rabbitmq',
                         'app.kubernetes.io/instance': self.object_name(),
@@ -249,13 +251,14 @@ class RabbitMQOfficialRequest:
                     },
                     'serviceName': self.object_name('headless'),
                     'replicas': 1,
-                    'template': deepmerge.merge_or_raise({
+                    'template': {
                         'metadata': {
+                            'namespace': ValueData(self.namespace, enabled=self.namespace is not None),
                             'labels': {
                                 'app.kubernetes.io/name': 'rabbitmq',
                                 'app.kubernetes.io/instance': self.object_name(),
                             },
-                            'annotations': values['podAnnotations'],
+                            'annotations': values['metrics']['podAnnotations'],
                         },
                         'spec': {
                             'initContainers': [{
@@ -332,7 +335,7 @@ class RabbitMQOfficialRequest:
                                         }]
                                     },
                                 },
-                                {
+                                ValueData({
                                     'name': 'rabbitmq-config-load-definition',
                                     'secret': {
                                         'secretName': self.object_name('config-secret') if values['loadDefinition']['existingSecret'] == '' else values['existingSecret']['existingSecret'],
@@ -341,11 +344,11 @@ class RabbitMQOfficialRequest:
                                             'path': 'load_definition.json',
                                         }]
                                     },
-                                },
+                                }, enabled=values['loadDefinition']['enabled']),
                                 {
                                     'name': 'rabbitmq-data',
                                     'persistentVolumeClaim': {
-                                        'claimName': values['persistence']['existingClaim '],
+                                        'claimName': values['persistence']['existingClaim'],
                                     },
                                 },
                             ],
@@ -410,17 +413,18 @@ class RabbitMQOfficialRequest:
                                     'failureThreshold': 3,
                                     'successThreshold': 1,
                                 },
-                                'resources': values['resources'],
+                                'resources': ValueData(value=values['resources'], disabled_if_none=True),
                             }]
                         }
-                    }, mrg_namespace),
+                    },
                 }
-            }, mrg_namespace),
-            deepmerge.merge_or_raise({
+            },
+            {
                 'kind': 'Service',
                 'apiVersion': 'v1',
                 'metadata': {
                     'name': self.object_name('service'),
+                    'namespace': ValueData(self.namespace, enabled=self.namespace is not None),
                     'labels': {
                         'app.kubernetes.io/name': 'rabbitmq',
                         'app.kubernetes.io/instance': self.object_name(),
@@ -432,11 +436,11 @@ class RabbitMQOfficialRequest:
                         'name': 'http',
                         'protocol': 'TCP',
                         'port': 15672,
-                    }, {
+                    }, ValueData({
                         'name': 'prometheus',
                         'protocol': 'TCP',
                         'port': 15692
-                    }, {
+                    }, enabled=values['metrics']['enabled']), {
                         'name': 'amqp',
                         'protocol': 'TCP',
                         'port': 5672
@@ -446,10 +450,11 @@ class RabbitMQOfficialRequest:
                         'app.kubernetes.io/instance': self.object_name(),
                     }
                 }
-            }, mrg_namespace),
+            },
         ])
 
-        return ret
+        return RabbitMQOfficialChart(request=self, config=self.config, data=BuildData(data))
+
 
     def configfile_get(self, values: Mapping[str, Any]):
         ret = []

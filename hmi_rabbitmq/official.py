@@ -227,7 +227,6 @@ class RabbitMQOfficialRequest:
             'metadata': {
                 'name': self.name_format('config-secret'),
                 'namespace': namespace_value,
-
             },
             'type': 'Opaque',
             'data': config_secret,

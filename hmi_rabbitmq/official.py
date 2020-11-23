@@ -1,14 +1,15 @@
-from typing import Optional, Mapping, Any, Sequence, List
+from typing import Optional, Mapping, Any, Sequence, List, Dict
 
 from helmion.chart import Chart
 from helmion.config import Config
 from helmion.data import ChartData
 from kubragen2.configfile import ConfigFileRender_SysCtl, ConfigFileRender_RawStr
-from kubragen2.data import ValueData
+from kubragen2.data import ValueData, Data
 from kubragen2.kdatahelper import KDataHelper_ConfigFile
 from kubragen2.options import Options, OptionValue, OptionsBuildData
 
 from hmi_rabbitmq.configfile import RabbitMQConfigFile
+from hmi_rabbitmq.private.official import PersistenceData, VolumeClaimTemplate
 
 
 class RabbitMQOfficialRequest:
@@ -19,6 +20,8 @@ class RabbitMQOfficialRequest:
     namespace: Optional[str]
     releasename: str
     values: Optional[Mapping[str, Any]]
+    _options: Options
+    _serviceaccount: str
 
     def __init__(self, namespace: Optional[str] = 'default', releasename: str = 'rabbitmq',
                  values: Optional[Mapping[str, Any]] = None, config: Optional[Config] = None):
@@ -26,6 +29,16 @@ class RabbitMQOfficialRequest:
         self.releasename = releasename
         self.values = values
         self.config = config if config is not None else Config()
+        self._options = Options({
+            'base': {
+                'namespace': namespace,
+                'releasename': releasename,
+            },
+        }, self.allowedValues(), self.values)
+        self._serviceaccount = self._options.option_get_opt('serviceAccount.name', self.name_format())
+
+    def options(self) -> Options:
+        return self._options
 
     def allowedValues(self) -> Mapping[str, Any]:
         return {
@@ -71,6 +84,22 @@ class RabbitMQOfficialRequest:
                 'create': True,
                 'name': '',
             },
+            'livenessProbe': {
+                'enabled': True,
+                'initialDelaySeconds': 120,
+                'timeoutSeconds': 20,
+                'periodSeconds': 30,
+                'failureThreshold': 6,
+                'successThreshold': 1,
+            },
+            'readinessProbe': {
+                'enabled': True,
+                'initialDelaySeconds': 10,
+                'timeoutSeconds': 20,
+                'periodSeconds': 30,
+                'failureThreshold': 3,
+                'successThreshold': 1,
+            },
             'rbac': {
                 'create': True,
             },
@@ -81,7 +110,6 @@ class RabbitMQOfficialRequest:
                 'accessMode': 'ReadWriteOnce',
                 'existingClaim': '',
                 'size': '8Gi',
-                'volumes': {},
             },
             'service': {
                 'type': 'ClusterIP',
@@ -108,7 +136,7 @@ class RabbitMQOfficialRequest:
                     'interval': '30s',
                 }
             },
-            'resources': {},
+            'resources': None,
         }
 
     def name_format(self, suffix: str = ''):
@@ -118,24 +146,21 @@ class RabbitMQOfficialRequest:
         return ret
 
     def generate(self) -> Chart:
-        values = Options(self.allowedValues(), self.values)
-
-        serviceaccount = values.option_get_opt('serviceAccount.name', self.name_format())
         namespace_value = ValueData(self.namespace, enabled=self.namespace is not None)
 
         data: List[ChartData] = []
 
-        if values.option_get('serviceAccount.create'):
+        if self._options.option_get('serviceAccount.create'):
             data.append({
                 'apiVersion': 'v1',
                 'kind': 'ServiceAccount',
                 'metadata': {
-                    'name': serviceaccount,
+                    'name': self._serviceaccount,
                     'namespace': namespace_value,
                 }
             })
 
-        if values.option_get('rbac.create'):
+        if self._options.option_get('rbac.create'):
             data.extend([
                 {
                     'kind': 'Role',
@@ -156,7 +181,7 @@ class RabbitMQOfficialRequest:
                     },
                     'subjects': [{
                         'kind': 'ServiceAccount',
-                        'name': serviceaccount,
+                        'name': self._serviceaccount,
                     }],
                     'roleRef': {
                         'apiGroup': 'rbac.authorization.k8s.io',
@@ -166,11 +191,11 @@ class RabbitMQOfficialRequest:
                 },
             ])
 
-        plugins = set(values.option_get('plugins').split(' '))
-        if values.option_get('extraPlugins') != '':
-            plugins.update(values.option_get('extraPlugins').split(' '))
-        if values.option_get('metrics.enabled'):
-            plugins.add(values.option_get('metrics.plugins'))
+        plugins = set(self._options.option_get('plugins').split(' '))
+        if self._options.option_get('extraPlugins') != '':
+            plugins.update(self._options.option_get('extraPlugins').split(' '))
+        if self._options.option_get('metrics.enabled'):
+            plugins.add(self._options.option_get('metrics.plugins'))
 
         data.append({
             'apiVersion': 'v1',
@@ -181,8 +206,8 @@ class RabbitMQOfficialRequest:
             },
             'data': {
                 'enabled_plugins': ' '.join(plugins),
-                'rabbitmq.conf': KDataHelper_ConfigFile.info(values.option_get_opt(
-                    'configuration', RabbitMQConfigFile()), values, [
+                'rabbitmq.conf': KDataHelper_ConfigFile.info(self._options.option_get_opt(
+                    'configuration', RabbitMQConfigFile()), self._options, [
                     ConfigFileRender_SysCtl(),
                     ConfigFileRender_RawStr()
                 ]),
@@ -190,11 +215,11 @@ class RabbitMQOfficialRequest:
         })
 
         config_secret = {}
-        if values.option_get('auth.existingErlangSecret') == '':
-            config_secret['rabbitmq-erlang-cookie'] = values.option_get('auth.erlangCookie')
+        if self._options.option_get('auth.existingErlangSecret') == '':
+            config_secret['rabbitmq-erlang-cookie'] = self._options.option_get('auth.erlangCookie')
 
-        if values.option_get('loadDefinition.enabled') and values.option_get('loadDefinition.existingSecret') == '':
-            config_secret['load_definition.json'] = values.option_get('loadDefinition.value')
+        if self._options.option_get('loadDefinition.enabled') and self._options.option_get('loadDefinition.existingSecret') == '':
+            config_secret['load_definition.json'] = self._options.option_get('loadDefinition.value')
 
         data.append({
             'apiVersion': 'v1',
@@ -269,7 +294,7 @@ class RabbitMQOfficialRequest:
                                 'app.kubernetes.io/name': 'rabbitmq',
                                 'app.kubernetes.io/instance': self.name_format(),
                             },
-                            'annotations': values.option_get('metrics.podAnnotations'),
+                            'annotations': self._options.option_get('metrics.podAnnotations'),
                         },
                         'spec': {
                             'initContainers': [{
@@ -339,7 +364,7 @@ class RabbitMQOfficialRequest:
                                 {
                                     'name': 'rabbitmq-config-erlang-cookie',
                                     'secret': {
-                                        'secretName': values.option_get_opt('auth.existingErlangSecret', self.name_format('config-secret')),
+                                        'secretName': self._options.option_get_opt('auth.existingErlangSecret', self.name_format('config-secret')),
                                         'items': [{
                                             'key': 'rabbitmq-erlang-cookie',
                                             'path': 'rabbitmq-erlang-cookie',
@@ -349,21 +374,16 @@ class RabbitMQOfficialRequest:
                                 ValueData({
                                     'name': 'rabbitmq-config-load-definition',
                                     'secret': {
-                                        'secretName': values.option_get_opt('loadDefinition.existingSecret', self.name_format('config-secret')),
+                                        'secretName': self._options.option_get_opt('loadDefinition.existingSecret', self.name_format('config-secret')),
                                         'items': [{
                                             'key': 'load_definition.json',
                                             'path': 'load_definition.json',
                                         }]
                                     },
-                                }, enabled=values.option_get('loadDefinition.enabled')),
-                                {
-                                    'name': 'rabbitmq-data',
-                                    'persistentVolumeClaim': {
-                                        'claimName': values.option_get('persistence.existingClaim'),
-                                    },
-                                },
+                                }, enabled=self._options.option_get('loadDefinition.enabled')),
+                                PersistenceData(name='rabbitmq-data', options=self._options),
                             ],
-                            'serviceAccountName': serviceaccount,
+                            'serviceAccountName': self._serviceaccount,
                             'securityContext': {
                                 'fsGroup': 999,
                                 'runAsUser': 999,
@@ -371,9 +391,9 @@ class RabbitMQOfficialRequest:
                             },
                             'containers': [{
                                 'name': 'rabbitmq',
-                                'image': '{}/{}:{}'.format(values.option_get('image.registry'),
-                                                           values.option_get('image.repository'),
-                                                           values.option_get('image.tag')),
+                                'image': '{}/{}:{}'.format(self._options.option_get('image.registry'),
+                                                           self._options.option_get('image.repository'),
+                                                           self._options.option_get('image.tag')),
                                 'volumeMounts': [{
                                     'name': 'rabbitmq-config-rw',
                                     'mountPath': '/etc/rabbitmq'
@@ -395,7 +415,7 @@ class RabbitMQOfficialRequest:
                                     'name': 'amqp-ssl',
                                     'containerPort': 5671,
                                     'protocol': 'TCP'
-                                }, enabled=values.option_get('auth.tls.enabled')),
+                                }, enabled=self._options.option_get('auth.tls.enabled')),
                                 {
                                     'name': 'http-stats',
                                     'containerPort': 15672,
@@ -411,31 +431,34 @@ class RabbitMQOfficialRequest:
                                     'containerPort': 4369,
                                     'protocol': 'TCP'
                                 }],
-                                'livenessProbe': {
+                                'livenessProbe': ValueData({
                                     'exec': {
                                         'command': ['rabbitmq-diagnostics', 'status']
                                     },
-                                    'initialDelaySeconds': 120,
-                                    'periodSeconds': 30,
-                                    'timeoutSeconds': 20,
-                                    'failureThreshold': 6,
-                                    'successThreshold': 1,
-                                },
-                                'readinessProbe': {
+                                    'initialDelaySeconds': self._options.option_get('livenessProbe.initialDelaySeconds'),
+                                    'periodSeconds': self._options.option_get('livenessProbe.timeoutSeconds'),
+                                    'timeoutSeconds': self._options.option_get('livenessProbe.periodSeconds'),
+                                    'failureThreshold': self._options.option_get('livenessProbe.failureThreshold'),
+                                    'successThreshold': self._options.option_get('livenessProbe.successThreshold'),
+                                }, enabled=self._options.option_get('livenessProbe.enabled')),
+                                'readinessProbe': ValueData({
                                     'exec': {
                                         'command': ['rabbitmq-diagnostics', 'ping']
                                     },
-                                    'initialDelaySeconds': 10,
-                                    'periodSeconds': 30,
-                                    'timeoutSeconds': 20,
-                                    'failureThreshold': 3,
-                                    'successThreshold': 1,
-                                },
-                                'resources': ValueData(value=values.option_get('resources'), disabled_if_none=True),
+                                    'initialDelaySeconds': self._options.option_get('readinessProbe.initialDelaySeconds'),
+                                    'periodSeconds': self._options.option_get('readinessProbe.timeoutSeconds'),
+                                    'timeoutSeconds': self._options.option_get('readinessProbe.periodSeconds'),
+                                    'failureThreshold': self._options.option_get('readinessProbe.failureThreshold'),
+                                    'successThreshold': self._options.option_get('readinessProbe.successThreshold'),
+                                }, enabled=self._options.option_get('readinessProbe.enabled')),
+                                'resources': ValueData(self._options.option_get('resources'), disabled_if_none=True),
                             }]
                         }
                     },
-                }
+                    'volumeClaimTemplates': [
+                        VolumeClaimTemplate(name='rabbitmq-data', options=self._options),
+                    ],
+                },
             },
             {
                 'kind': 'Service',
@@ -451,24 +474,24 @@ class RabbitMQOfficialRequest:
                 'spec': {
                     'type': 'ClusterIP',
                     'ports': [{
-                        'name': values.option_get('service.managerPortName'),
+                        'name': self._options.option_get('service.managerPortName'),
                         'protocol': 'TCP',
-                        'port': values.option_get('service.metricsPort'),
+                        'port': self._options.option_get('service.metricsPort'),
                         'targetPort': 'http-stats',
                     }, {
-                        'name': values.option_get('service.epmdPortName'),
+                        'name': self._options.option_get('service.epmdPortName'),
                         'protocol': 'TCP',
-                        'port': values.option_get('service.epmdPort'),
+                        'port': self._options.option_get('service.epmdPort'),
                         'targetPort': 'epmd',
                     }, ValueData({
-                        'name': values.option_get('service.metricsPortName'),
+                        'name': self._options.option_get('service.metricsPortName'),
                         'protocol': 'TCP',
-                        'port': values.option_get('service.metricsPort'),
+                        'port': self._options.option_get('service.metricsPort'),
                         'targetPort': 'metrics',
-                    }, enabled=values.option_get('metrics.enabled')), {
-                        'name': values.option_get('service.portName'),
+                    }, enabled=self._options.option_get('metrics.enabled')), {
+                        'name': self._options.option_get('service.portName'),
                         'protocol': 'TCP',
-                        'port': values.option_get('service.port'),
+                        'port': self._options.option_get('service.port'),
                         'targetPort': 'amqp',
                     }],
                     'selector': {
@@ -479,7 +502,37 @@ class RabbitMQOfficialRequest:
             },
         ])
 
-        return RabbitMQOfficialChart(request=self, config=self.config, data=OptionsBuildData(values, data))
+        if self._options.option_get('metrics.serviceMonitor.enabled'):
+            data.append({
+                'apiVersion': 'monitoring.coreos.com/v1',
+                'kind': 'ServiceMonitor',
+                'metadata': {
+                    'name': self.name_format(),
+                    'namespace': namespace_value,
+                    'labels': {
+                        'app.kubernetes.io/name': 'rabbitmq',
+                        'app.kubernetes.io/instance': self.name_format(),
+                    }
+                },
+                'spec': {
+                    'endpoints': [{
+                        'port': 'metrics',
+                        'interval': self._options.option_get('metrics.serviceMonitor.interval'),
+                    }],
+                    'namespaceSelector': {
+                        'matchNames': [namespace_value]
+                    },
+                    'selector': {
+                        'matchLabels': {
+                            'app.kubernetes.io/name': 'rabbitmq',
+                            'app.kubernetes.io/instance': self.name_format(),
+                        }
+                    }
+                }
+            })
+
+        return RabbitMQOfficialChart(request=self, config=self.config,
+                                     data=OptionsBuildData(self._options, data))
 
 
 class RabbitMQOfficialChart(Chart):

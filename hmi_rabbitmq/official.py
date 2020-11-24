@@ -128,7 +128,7 @@ class RabbitMQOfficialRequest:
                 'enabled': False,
                 'plugins': 'rabbitmq_prometheus',
                 'podAnnotations': {
-                    'prometheus.io/scrape': '"true"',
+                    'prometheus.io/scrape': 'true',
                     'prometheus.io/port': OptionValue('service.metricsPort'),
                 },
                 'serviceMonitor': {

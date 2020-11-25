@@ -205,7 +205,7 @@ class RabbitMQChartRequest:
                 'namespace': namespace_value,
             },
             'data': {
-                'enabled_plugins': ' '.join(plugins),
+                'enabled_plugins': '[{}].'.format(', '.join(plugins)),
                 'rabbitmq.conf': KDataHelper_ConfigFile.info(self._options.option_get_opt(
                     'configuration', RabbitMQConfigFile()), self._options, [
                     ConfigFileRender_SysCtl(),
@@ -329,7 +329,7 @@ class RabbitMQChartRequest:
                                             'mkdir -p '
                                             '/var/lib/rabbitmq; '
                                             'cp '
-                                            '/tmp/rabbitmq-cookie/erlang_cookie '
+                                            '/tmp/rabbitmq-cookie/rabbitmq-erlang-cookie '
                                             '/var/lib/rabbitmq/.erlang.cookie; '
                                             'chmod 600 '
                                             '/var/lib/rabbitmq/.erlang.cookie; '

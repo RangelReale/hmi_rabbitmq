@@ -113,15 +113,15 @@ class RabbitMQChartRequest:
             },
             'service': {
                 'type': 'ClusterIP',
-                'port': '5672',
+                'port': 5672,
                 'portName': 'amqp',
-                'tlsPort': '5671',
+                'tlsPort': 5671,
                 'tlsPortName': 'amqp-ssl',
-                'managerPort': '15672',
+                'managerPort': 15672,
                 'managerPortName': 'http-stats',
-                'metricsPort': '15692',
+                'metricsPort': 15692,
                 'metricsPortName': 'metrics',
-                'epmdPort': '4369',
+                'epmdPort': 4369,
                 'epmdPortName': 'epmd',
             },
             'metrics': {
@@ -129,7 +129,7 @@ class RabbitMQChartRequest:
                 'plugins': 'rabbitmq_prometheus',
                 'podAnnotations': {
                     'prometheus.io/scrape': 'true',
-                    'prometheus.io/port': OptionValue('service.metricsPort'),
+                    'prometheus.io/port': OptionValue('service.metricsPort', wrap_type=str),
                 },
                 'serviceMonitor': {
                     'enabled': False,
@@ -478,7 +478,7 @@ class RabbitMQChartRequest:
                     'ports': [{
                         'name': self._options.option_get('service.managerPortName'),
                         'protocol': 'TCP',
-                        'port': self._options.option_get('service.metricsPort'),
+                        'port': self._options.option_get('service.managerPort'),
                         'targetPort': 'http-stats',
                     }, {
                         'name': self._options.option_get('service.epmdPortName'),

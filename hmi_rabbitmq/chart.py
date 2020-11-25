@@ -9,10 +9,10 @@ from kubragen2.kdatahelper import KDataHelper_ConfigFile, KDataHelper_Env
 from kubragen2.options import Options, OptionValue, OptionsBuildData
 
 from hmi_rabbitmq.configfile import RabbitMQConfigFile
-from hmi_rabbitmq.private.official import PersistenceData, VolumeClaimTemplate
+from hmi_rabbitmq.private.chart import PersistenceData, VolumeClaimTemplate
 
 
-class RabbitMQOfficialRequest:
+class RabbitMQChartRequest:
     """
     Based on `rabbitmq/diy-kubernetes-examples <https://github.com/rabbitmq/diy-kubernetes-examples>`_.
     """
@@ -533,17 +533,17 @@ class RabbitMQOfficialRequest:
                 }
             })
 
-        return RabbitMQOfficialChart(request=self, config=self.config,
-                                     data=OptionsBuildData(self._options, data))
+        return RabbitMQChart(request=self, config=self.config,
+                             data=OptionsBuildData(self._options, data))
 
 
-class RabbitMQOfficialChart(Chart):
-    request: RabbitMQOfficialRequest
+class RabbitMQChart(Chart):
+    request: RabbitMQChartRequest
 
-    def __init__(self, request: RabbitMQOfficialRequest, config: Optional[Config] = None,
+    def __init__(self, request: RabbitMQChartRequest, config: Optional[Config] = None,
                  data: Optional[Sequence[ChartData]] = None):
         super().__init__(config=config, data=data)
         self.request = request
 
     def createClone(self) -> 'Chart':
-        return RabbitMQOfficialChart(request=self.request, config=self.config)
+        return RabbitMQChart(request=self.request, config=self.config)

@@ -6,6 +6,7 @@ from helmion.data import ChartData
 from kubragen2.configfile import ConfigFileRender_SysCtl, ConfigFileRender_RawStr
 from kubragen2.data import ValueData, Data
 from kubragen2.kdatahelper import KDataHelper_ConfigFile, KDataHelper_Env
+from kubragen2.merger import merger
 from kubragen2.options import Options, OptionValue, OptionsBuildData
 
 from hmi_rabbitmq.configfile import RabbitMQConfigFile
@@ -134,6 +135,7 @@ class RabbitMQChartRequest:
                 'serviceMonitor': {
                     'enabled': False,
                     'interval': '30s',
+                    'labels': {},
                 }
             },
             'resources': None,
@@ -504,17 +506,17 @@ class RabbitMQChartRequest:
             },
         ])
 
-        if self._options.option_get('metrics.serviceMonitor.enabled'):
+        if self._options.option_get('metrics.enabled') and self._options.option_get('metrics.serviceMonitor.enabled'):
             data.append({
                 'apiVersion': 'monitoring.coreos.com/v1',
                 'kind': 'ServiceMonitor',
                 'metadata': {
                     'name': self.name_format(),
                     'namespace': namespace_value,
-                    'labels': {
+                    'labels': merger.merge({
                         'app.kubernetes.io/name': 'rabbitmq',
                         'app.kubernetes.io/instance': self.name_format(),
-                    }
+                    }, self._options.option_get('metrics.serviceMonitor.labels')),
                 },
                 'spec': {
                     'endpoints': [{

@@ -18,11 +18,12 @@ class RabbitMQConfigFile(ConfigFile_Extend):
 
         config['default_user'] = options.option_get('auth.username')
         config['default_pass'] = options.option_get('auth.password')
-        config['cluster_formation.peer_discovery_backend'] = 'rabbit_peer_discovery_k8s'
-        config['cluster_formation.k8s.host'] = 'kubernetes.default.svc.{}'.format(options.option_get('clusterDomain'))
-        config['cluster_formation.node_cleanup.interval'] = 10
-        config['cluster_formation.node_cleanup.only_log_warning'] = 'true'
-        config['cluster_partition_handling'] = 'autoheal'
+        if 'rabbitmq_peer_discovery_k8s' in options.option_get('plugins').split(' '):
+            config['cluster_formation.peer_discovery_backend'] = 'rabbit_peer_discovery_k8s'
+            config['cluster_formation.k8s.host'] = 'kubernetes.default.svc.{}'.format(options.option_get('clusterDomain'))
+            config['cluster_formation.node_cleanup.interval'] = 10
+            config['cluster_formation.node_cleanup.only_log_warning'] = 'true'
+            config['cluster_partition_handling'] = 'autoheal'
         config['queue_master_locator'] = 'min-masters'
         config['loopback_users.guest'] = 'false'
         if options.option_get('auth.tls.enabled'):
@@ -32,6 +33,8 @@ class RabbitMQConfigFile(ConfigFile_Extend):
             config['ssl_options.cacertfile'] = '/opt/bitnami/rabbitmq/certs/ca_certificate.pem'
             config['ssl_options.certfile'] = '/opt/bitnami/rabbitmq/certs/server_certificate.pem'
             config['ssl_options.keyfile'] = '/opt/bitnami/rabbitmq/certs/server_key.pem'
+        if options.option_get('loadDefinition.enabled') is not None:
+            config['load_definitions'] = '/etc/rabbitmq-load-definition/load_definition.json'
         if options.option_get('metrics.enabled'):
             config['prometheus.tcp.port'] = options.option_get('service.metricsPort')
         if options.option_get('memoryHighWatermark.enabled'):
